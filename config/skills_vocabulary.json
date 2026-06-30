@@ -1,0 +1,16 @@
+{
+  "javascript": ["js", "java script", "ecmascript", "node.js", "nodejs"],
+  "typescript": ["ts"],
+  "python": ["py", "python3"],
+  "java": [],
+  "go": ["golang"],
+  "c++": ["cpp", "cplusplus"],
+  "c#": ["c sharp", "csharp", "dotnet", ".net"],
+  "sql": ["mysql", "postgresql", "postgres", "tsql", "pl/sql"],
+  "react": ["react.js", "reactjs"],
+  "kubernetes": ["k8s"],
+  "docker": ["containers"],
+  "aws": ["amazon web services"],
+  "machine learning": ["ml", "machinelearning"],
+  "data engineering": ["data eng", "dataengineering"]
+}
