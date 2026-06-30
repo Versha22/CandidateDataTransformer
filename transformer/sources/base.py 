@@ -1,0 +1,99 @@
+"""Source parser interface and the raw record it produces.
+
+Every input source (ATS JSON, CSV, recruiter notes) is parsed into a list of
+`RawRecord`s before any normalization or merging happens. A `RawRecord` is the
+*pre-canonical* view of one candidate as seen by one source: loosely-typed
+field values paired with the source metadata needed to build provenance and
+confidence later in the pipeline.
+
+Keeping parsing behind the `SourceParser` interface means the rest of the
+pipeline depends only on this contract, not on any concrete format. Adding a
+new source is a new `SourceParser` implementation and nothing else changes.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from transformer.models import ExtractionMethod, SourceType
+
+
+class RawRecord(BaseModel):
+    """One candidate as reported by a single source, before normalization.
+
+    The pipeline turns each `RawRecord` into canonical `Attribute`s: `fields`
+    supplies the values, while `source`, `method`, and `source_timestamp`
+    supply the provenance metadata attached to every value drawn from it.
+
+    `fields` is intentionally loosely typed (`dict[str, Any]`): a source may
+    provide strings, numbers, lists (e.g. skills), or nested objects (e.g.
+    experience entries). Normalization, not parsing, is responsible for
+    coercing these into canonical shapes.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    source: SourceType
+    method: ExtractionMethod
+    fields: dict[str, Any] = Field(default_factory=dict)
+    source_timestamp: Optional[datetime] = Field(
+        default=None,
+        description="When the source record was produced, if known. Propagated "
+        "into provenance and used as a tie-breaker in conflict resolution.",
+    )
+    origin: Optional[str] = Field(
+        default=None,
+        description="Best-effort identifier of the input (e.g. file path), used "
+        "for logging and quarantine messages.",
+    )
+
+
+class SourceParser(ABC):
+    """Contract for turning one input file into zero or more `RawRecord`s.
+
+    Implementations own format-specific parsing only. They must not normalize,
+    score, or merge: those are separate pipeline stages. A parser may emit
+    multiple records from one file (e.g. a CSV with many rows) and should raise
+    `ParsingError` for malformed input so the pipeline can quarantine it.
+    """
+
+    #: Source type produced by this parser. Concrete parsers set this.
+    source_type: SourceType
+
+    #: Extraction method for values produced by this parser.
+    extraction_method: ExtractionMethod
+
+    @abstractmethod
+    def can_parse(self, path: Path) -> bool:
+        """Return True if this parser can handle the given file.
+
+        Used by input detection to route a file to the right parser. The check
+        should be cheap (typically extension and/or a lightweight content
+        sniff) and must not raise for an unsupported file; it returns False.
+
+        Args:
+            path: Path to the candidate input file.
+
+        Returns:
+            True if `parse` can be called on this file, otherwise False.
+        """
+
+    @abstractmethod
+    def parse(self, path: Path) -> list[RawRecord]:
+        """Parse a file into raw records.
+
+        Args:
+            path: Path to the input file.
+
+        Returns:
+            One `RawRecord` per candidate found in the file.
+
+        Raises:
+            ParsingError: If the file is malformed or cannot be read. The
+                pipeline catches this and quarantines the input.
+        """

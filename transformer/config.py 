@@ -6,46 +6,47 @@ choose null-vs-omit behaviour, and toggle whether confidence and provenance are
 emitted. It cannot add, remove, or reshape canonical fields.
 
 The config is loaded and validated at startup ("fail fast"): an invalid config
-raises before any candidate record is touched, so we never fail half-way
-through a batch. Each config carries a version so an output can be reproduced
-with the same projection rules.
+raises `ConfigError` before any candidate record is touched, so a batch never
+fails half-way through. Each config carries a version so an output can be
+reproduced with the same projection rules.
 """
 
 from __future__ import annotations
 
 import json
+from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from transformer.errors import ConfigError
 
-# Canonical field names that a config is allowed to select/rename. This is the
-# contract between config and the canonical schema (models.CandidateProfile).
-# Listing them explicitly lets us reject typos in a config at load time rather
-# than silently dropping a field the user thought they were selecting.
-CANONICAL_FIELDS: frozenset[str] = frozenset(
-    {
-        "candidate_id",
-        "full_name",
-        "emails",
-        "phones",
-        "skills",
-        "experience",
-        "education",
-        "links",
-        "profile_confidence",
-        "needs_review",
-    }
+# Canonical fields a config may select or rename, in a fixed, deterministic
+# order. This tuple is the contract between config and models.CandidateProfile:
+# listing the fields explicitly lets us reject typos at load time instead of
+# silently dropping a field the user thought they had selected. The order is
+# used when a config selects "all" fields, so output ordering is reproducible.
+CANONICAL_FIELD_ORDER: tuple[str, ...] = (
+    "candidate_id",
+    "full_name",
+    "emails",
+    "phones",
+    "skills",
+    "experience",
+    "education",
+    "links",
+    "profile_confidence",
+    "needs_review",
 )
 
+CANONICAL_FIELDS: frozenset[str] = frozenset(CANONICAL_FIELD_ORDER)
 
-class NullPolicy(str):
-    """Allowed values for how absent fields are emitted."""
 
-    NULL = "null"  # emit the key with a null value
-    OMIT = "omit"  # drop the key entirely
+class NullPolicy(str, Enum):
+    """How absent canonical fields are represented in the output."""
+
+    NULL = "null"  # emit the output key with a null value
+    OMIT = "omit"  # drop the output key entirely
 
 
 class ProjectionConfig(BaseModel):
@@ -54,7 +55,7 @@ class ProjectionConfig(BaseModel):
     Attributes:
         version: Identifier for this config, recorded so output is reproducible.
         fields: Canonical field names to include, in output order. Empty means
-            "all canonical fields".
+            "all canonical fields", emitted in `CANONICAL_FIELD_ORDER`.
         rename: Map of canonical field name -> output key name.
         null_policy: Whether absent fields are emitted as null or omitted.
         include_confidence: Emit per-field and profile confidence when true.
@@ -66,23 +67,30 @@ class ProjectionConfig(BaseModel):
     version: str = Field(min_length=1)
     fields: list[str] = Field(default_factory=list)
     rename: dict[str, str] = Field(default_factory=dict)
-    null_policy: str = Field(default=NullPolicy.OMIT)
+    null_policy: NullPolicy = NullPolicy.OMIT
     include_confidence: bool = True
     include_provenance: bool = True
 
     @model_validator(mode="after")
     def _validate_against_canonical(self) -> "ProjectionConfig":
-        """Reject anything that references a non-canonical field or bad policy.
+        """Reject any reference to a field that is not on the canonical model.
 
         This is the meta-schema check: it guarantees a config can only ever
-        project fields that actually exist on the canonical model.
+        project fields that actually exist on `CandidateProfile`.
         """
         unknown_selected = set(self.fields) - CANONICAL_FIELDS
         if unknown_selected:
             raise ValueError(
                 f"Config selects unknown canonical field(s): "
                 f"{sorted(unknown_selected)}. "
-                f"Allowed fields: {sorted(CANONICAL_FIELDS)}"
+                f"Allowed fields: {list(CANONICAL_FIELD_ORDER)}"
+            )
+
+        duplicate_check: set[str] = set()
+        duplicates = {f for f in self.fields if f in duplicate_check or duplicate_check.add(f)}
+        if duplicates:
+            raise ValueError(
+                f"Config selects duplicate field(s): {sorted(duplicates)}."
             )
 
         unknown_renamed = set(self.rename) - CANONICAL_FIELDS
@@ -92,20 +100,18 @@ class ProjectionConfig(BaseModel):
                 f"{sorted(unknown_renamed)}."
             )
 
-        if self.null_policy not in (NullPolicy.NULL, NullPolicy.OMIT):
-            raise ValueError(
-                f"null_policy must be '{NullPolicy.NULL}' or "
-                f"'{NullPolicy.OMIT}', got '{self.null_policy}'."
-            )
-
         return self
 
     @property
     def selected_fields(self) -> list[str]:
-        """Canonical fields to emit, in order. Empty selection means all."""
+        """Canonical fields to emit, in deterministic order.
+
+        An empty selection means "all fields", returned in
+        `CANONICAL_FIELD_ORDER` so output ordering is reproducible.
+        """
         if not self.fields:
-            return [f for f in CANONICAL_FIELDS]
-        return self.fields
+            return list(CANONICAL_FIELD_ORDER)
+        return list(self.fields)
 
     def output_key(self, canonical_field: str) -> str:
         """Return the output key for a canonical field, applying any rename."""
@@ -115,15 +121,15 @@ class ProjectionConfig(BaseModel):
 def load_config(path: str | Path) -> ProjectionConfig:
     """Load and validate a projection config from a JSON file.
 
-    Fails fast with a clear `ConfigError` if the file is missing, not valid
-    JSON, or does not satisfy the projection meta-schema. Raising here (at
-    startup) is intentional: a bad config must never let a batch begin.
+    Fails fast with a clear `ConfigError` if the file is missing, is not valid
+    JSON, has the wrong root type, or violates the projection meta-schema.
+    Raising at startup is intentional: a bad config must never let a batch begin.
 
     Args:
         path: Path to the JSON config file.
 
     Returns:
-        A validated, immutable ProjectionConfig.
+        A validated, immutable `ProjectionConfig`.
 
     Raises:
         ConfigError: If the file cannot be read, parsed, or validated.
