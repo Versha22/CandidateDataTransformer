@@ -1,0 +1,6 @@
+pydantic>=2.6,<3.0
+phonenumbers>=8.13
+python-dateutil>=2.9
+pycountry>=23.12
+rapidfuzz>=3.6
+pytest>=8.0

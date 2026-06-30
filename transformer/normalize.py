@@ -41,7 +41,7 @@ _DEFAULT_PHONE_REGION = "US"
 class SkillVocabulary:
     """Maps raw skill mentions to canonical skill names.
 
-    Backed by a JSON file of the form ``{"canonical": ["alias", ...]}``. Lookups
+    Backed by a mapping of the form ``{"canonical": ["alias", ...]}``. Lookups
     are case-insensitive. An unknown skill returns None so the caller can keep
     the raw value and mark it unmapped rather than guessing.
     """
@@ -50,8 +50,31 @@ class SkillVocabulary:
         self._alias_to_canonical = alias_to_canonical
 
     @classmethod
+    def from_dict(cls, mapping: dict[str, list[str]]) -> "SkillVocabulary":
+        """Build a vocabulary from an in-memory canonical -> aliases mapping.
+
+        Flattens canonical names and their aliases into a single lowercase
+        lookup. The canonical name maps to itself so it is always recognized.
+
+        Raises:
+            ValueError: If the mapping is not the expected shape.
+        """
+        if not isinstance(mapping, dict):
+            raise ValueError("Skills vocabulary must be a mapping.")
+
+        alias_to_canonical: dict[str, str] = {}
+        for canonical, aliases in mapping.items():
+            alias_to_canonical[canonical.lower()] = canonical
+            for alias in aliases or []:
+                alias_to_canonical[str(alias).lower()] = canonical
+        return cls(alias_to_canonical)
+
+    @classmethod
     def from_file(cls, path: str | Path) -> "SkillVocabulary":
         """Load a vocabulary from a JSON file of canonical -> aliases.
+
+        Delegates flattening to `from_dict` so there is one place that builds
+        the lookup.
 
         Raises:
             ValueError: If the file is missing or not the expected shape. This
@@ -69,13 +92,7 @@ class SkillVocabulary:
             raise ValueError(
                 f"Skills vocabulary '{vocab_path}' must be a JSON object."
             )
-
-        alias_to_canonical: dict[str, str] = {}
-        for canonical, aliases in data.items():
-            alias_to_canonical[canonical.lower()] = canonical
-            for alias in aliases or []:
-                alias_to_canonical[str(alias).lower()] = canonical
-        return cls(alias_to_canonical)
+        return cls.from_dict(data)
 
     def canonicalize(self, raw_skill: str) -> Optional[str]:
         """Return the canonical name for a raw skill, or None if unknown."""
@@ -86,8 +103,9 @@ def normalize_email(raw: str) -> Optional[str]:
     """Normalize an email to a trimmed, lowercased form.
 
     Performs a basic shape check (must contain a single '@' with text on both
-    sides). Returns None for anything that is not email-shaped, so callers can
-    drop it. Full RFC validation is intentionally out of scope.
+    sides and a dot in the domain). Returns None for anything that is not
+    email-shaped, so callers can drop it. Full RFC validation is intentionally
+    out of scope.
     """
     text = raw.strip().lower()
     if text.count("@") != 1:
@@ -157,6 +175,7 @@ def normalize_country(raw: str) -> Optional[str]:
     if not text:
         return None
 
+    # Exact code matches first (cheap and unambiguous).
     upper = text.upper()
     if len(upper) == 2 and pycountry.countries.get(alpha_2=upper):
         return upper
@@ -165,6 +184,7 @@ def normalize_country(raw: str) -> Optional[str]:
         if country:
             return country.alpha_2
 
+    # Fall back to a name lookup, tolerant of minor variations.
     try:
         matches = pycountry.countries.search_fuzzy(text)
     except LookupError:
