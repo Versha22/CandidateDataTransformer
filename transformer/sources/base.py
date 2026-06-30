@@ -16,8 +16,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
+from dateutil import parser as _date_parser
 from pydantic import BaseModel, ConfigDict, Field
 
 from transformer.models import ExtractionMethod, SourceType
@@ -51,6 +52,33 @@ class RawRecord(BaseModel):
         description="Best-effort identifier of the input (e.g. file path), used "
         "for logging and quarantine messages.",
     )
+
+
+def parse_source_timestamp(
+    fields: dict[str, Any], keys: Iterable[str]
+) -> Optional[datetime]:
+    """Return the first present, parseable timestamp among `keys`.
+
+    Shared by structured parsers (ATS, CSV) so timestamp extraction lives in one
+    place. A missing or unparseable timestamp is non-fatal and yields None: a
+    record without a timestamp simply has no recency signal for tie-breaking.
+
+    Args:
+        fields: The raw candidate fields.
+        keys: Candidate key names, in priority order.
+
+    Returns:
+        The parsed datetime, or None if none is present and parseable.
+    """
+    for key in keys:
+        value = fields.get(key)
+        if not value:
+            continue
+        try:
+            return _date_parser.parse(str(value))
+        except (ValueError, OverflowError):
+            continue
+    return None
 
 
 class SourceParser(ABC):
