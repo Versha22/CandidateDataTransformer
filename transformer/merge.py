@@ -20,7 +20,7 @@ pure function of its inputs and re-uses no normalization logic.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from transformer import confidence as confidence_rules
@@ -50,6 +50,9 @@ DEFAULT_SOURCE_TIER: dict[SourceType, float] = {
 }
 
 _DEFAULT_TIER = DEFAULT_SOURCE_TIER[SourceType.UNKNOWN]
+
+# Oldest possible sortable timestamp, used when a record has no timestamp.
+_MIN_TIMESTAMP = datetime.min.replace(tzinfo=timezone.utc)
 
 
 @dataclass(frozen=True)
@@ -85,6 +88,25 @@ class MappedRecord:
     experience: list[Experience] = field(default_factory=list)
     education: list[Education] = field(default_factory=list)
     links: list[Link] = field(default_factory=list)
+
+
+def _sortable_timestamp(ts: Optional[datetime]) -> datetime:
+    """Return a timezone-aware (UTC) datetime safe to compare and sort.
+
+    Records may carry timezone-aware timestamps (parsed from ISO strings with an
+    offset) or naive ones (e.g. a bare date), and Python cannot order an aware
+    against a naive datetime. This maps every input into a single comparable
+    domain:
+
+    * None  -> the oldest possible timestamp (so missing sorts last on recency),
+    * naive -> assumed UTC (preserving its existing wall-clock ordering),
+    * aware -> converted to UTC (preserving its true instant ordering).
+    """
+    if ts is None:
+        return _MIN_TIMESTAMP
+    if ts.tzinfo is None:
+        return ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(timezone.utc)
 
 
 def merge_records(
@@ -153,7 +175,7 @@ def _resolve_scalar_name(
     def sort_key(item: tuple[MappedRecord, ValueCandidate]) -> tuple:
         record, vc = item
         score = vc.provenance.confidence * _tier_weight(record.source, weights)
-        recency = record.timestamp or datetime.min
+        recency = _sortable_timestamp(record.timestamp)
         return (score, recency, _tier_weight(record.source, weights))
 
     ranked = sorted(candidates, key=sort_key, reverse=True)
