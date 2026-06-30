@@ -15,19 +15,15 @@ pipeline can quarantine it.
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional
-
-from dateutil import parser as date_parser
+from typing import Any
 
 from transformer.errors import ParsingError
 from transformer.models import ExtractionMethod, SourceType
-from transformer.sources.base import RawRecord, SourceParser
+from transformer.sources.base import RawRecord, SourceParser, parse_source_timestamp
 
-# Keys we treat as the record's production time, in priority order. The first
-# one present and parseable wins. Captured here (not in normalize) because the
-# timestamp is source metadata, used for provenance and recency tie-breaking.
+# Keys we treat as the record's production time, in priority order. Captured as
+# source metadata (feeds provenance and the recency tie-breaker), not normalized.
 _TIMESTAMP_KEYS: tuple[str, ...] = ("updated_at", "modified_at", "created_at")
 
 # Top-level keys under which an ATS export may nest its candidate list.
@@ -70,10 +66,7 @@ class AtsJsonParser(SourceParser):
             ) from exc
 
         candidates = self._extract_candidate_objects(data, path)
-        return [
-            self._to_raw_record(candidate, path)
-            for candidate in candidates
-        ]
+        return [self._to_raw_record(candidate, path) for candidate in candidates]
 
     def _extract_candidate_objects(
         self, data: Any, path: Path
@@ -99,9 +92,7 @@ class AtsJsonParser(SourceParser):
         )
 
     @staticmethod
-    def _require_object_list(
-        items: list[Any], path: Path
-    ) -> list[dict[str, Any]]:
+    def _require_object_list(items: list[Any], path: Path) -> list[dict[str, Any]]:
         """Ensure every element is a JSON object; otherwise the file is bad."""
         for index, item in enumerate(items):
             if not isinstance(item, dict):
@@ -111,37 +102,16 @@ class AtsJsonParser(SourceParser):
                 )
         return items
 
-    def _to_raw_record(
-        self, candidate: dict[str, Any], path: Path
-    ) -> RawRecord:
+    def _to_raw_record(self, candidate: dict[str, Any], path: Path) -> RawRecord:
         """Shape one candidate object into a `RawRecord`.
 
-        All known fields are passed through untouched into `fields`; the
-        timestamp is lifted out into `source_timestamp` for provenance.
+        All fields are passed through untouched into `fields`; the timestamp is
+        lifted into `source_timestamp` for provenance via the shared helper.
         """
         return RawRecord(
             source=self.source_type,
             method=self.extraction_method,
             fields=candidate,
-            source_timestamp=self._extract_timestamp(candidate),
+            source_timestamp=parse_source_timestamp(candidate, _TIMESTAMP_KEYS),
             origin=str(path),
         )
-
-    @staticmethod
-    def _extract_timestamp(candidate: dict[str, Any]) -> Optional[datetime]:
-        """Return the record's production time if present and parseable.
-
-        A missing or unparseable timestamp is not fatal: it simply means this
-        record has no recency signal for tie-breaking, so we return None rather
-        than raising.
-        """
-        for key in _TIMESTAMP_KEYS:
-            value = candidate.get(key)
-            if not value:
-                continue
-            try:
-                return date_parser.parse(str(value))
-            except (ValueError, OverflowError):
-                # Malformed timestamp is non-fatal; keep looking, then give up.
-                continue
-        return None
