@@ -1,0 +1,18 @@
+{
+  "version": "v1",
+  "fields": [
+    "candidate_id",
+    "full_name",
+    "emails",
+    "phones",
+    "skills",
+    "profile_confidence",
+    "needs_review"
+  ],
+  "rename": {
+    "full_name": "name"
+  },
+  "null_policy": "omit",
+  "include_confidence": true,
+  "include_provenance": true
+}

@@ -14,17 +14,17 @@ are merged. The rules, in order:
    records are NOT merged. A wrong merge is worse than a missed one.
 
 This module decides *grouping* only. Choosing winning values within a group is
-`merge.py`. It operates on normalized identifiers supplied by the caller so it
-stays pure and independently testable.
+`merge.py`. It operates on normalized identifiers (`ResolutionKey`) supplied by
+the caller so it stays pure and independently testable; it never touches raw
+records or re-runs normalization.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
 
 from rapidfuzz import fuzz
-
-from transformer.sources.base import RawRecord
 
 # Fuzzy match bands (0-100). At or above MERGE we group; in the borderline band
 # we flag for review and keep separate; below REVIEW we treat as different
@@ -72,26 +72,19 @@ class CandidateGroup:
     needs_review: bool = False
 
 
-def resolve(
-    records: list[RawRecord], keys: list[ResolutionKey]
-) -> list[CandidateGroup]:
+def resolve(keys: list[ResolutionKey]) -> list[CandidateGroup]:
     """Group records that belong to the same candidate.
 
+    Resolution is keyed entirely off the normalized `ResolutionKey`s; the caller
+    keeps a parallel list of records aligned by index and uses
+    `CandidateGroup.record_indices` to look them up afterwards.
+
     Args:
-        records: The batch's raw records.
-        keys: One `ResolutionKey` per record, aligned by index with `records`.
+        keys: One `ResolutionKey` per record, in batch order.
 
     Returns:
         One `CandidateGroup` per distinct candidate, in a deterministic order.
-
-    Raises:
-        ValueError: If `records` and `keys` have different lengths.
     """
-    if len(records) != len(keys):
-        raise ValueError(
-            f"records ({len(records)}) and keys ({len(keys)}) must align."
-        )
-
     groups = _group_by_exact_identifier(keys)
     groups = _apply_fuzzy_pass(groups, keys)
     return groups
@@ -114,7 +107,6 @@ def _group_by_exact_identifier(keys: list[ResolutionKey]) -> list[CandidateGroup
     def union(a: int, b: int) -> None:
         parent[find(a)] = find(b)
 
-    # Map each identifier to the first record index that owned it, then union.
     identifier_owner: dict[str, int] = {}
     for index, key in enumerate(keys):
         for identifier in key.strong_identifiers:
@@ -127,7 +119,7 @@ def _group_by_exact_identifier(keys: list[ResolutionKey]) -> list[CandidateGroup
 
 
 def _materialize_groups(
-    parent: dict[int, int], find, count: int
+    parent: dict[int, int], find: Callable[[int], int], count: int
 ) -> list[CandidateGroup]:
     """Turn union-find roots into deterministic, index-sorted groups."""
     by_root: dict[int, list[int]] = {}

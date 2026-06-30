@@ -1,17 +1,18 @@
 """Normalization stage: raw source values -> canonical normalized values.
 
-Per the Step 1 design this stage applies the four normalization rules:
+Per the Step 1 design this stage applies the normalization rules:
 
+* email   -> lowercased, trimmed (basic shape check)
 * phones  -> E.164 (via `phonenumbers`)
 * dates   -> ISO-8601, partial dates allowed (via `dateutil`)
 * country -> ISO-3166 alpha-2 (via `pycountry`)
 * skills  -> canonical names from a controlled vocabulary
 
 Every rule is a small, pure function. A value that cannot be normalized is
-*dropped*, not fatal: the record continues without that field, consistent with
-the design's "keep the raw value / mark unmapped, don't fail the batch" rule.
-The functions here return normalized strings only; wrapping them in canonical
-`Attribute`s (with provenance and confidence) happens in later stages.
+*dropped* (returns None), not fatal: the record continues without that field,
+consistent with the design's "keep the raw value / mark unmapped, don't fail the
+batch" rule. The functions here return normalized strings only; wrapping them in
+canonical `Attribute`s (with provenance and confidence) happens in later stages.
 """
 
 from __future__ import annotations
@@ -81,6 +82,22 @@ class SkillVocabulary:
         return self._alias_to_canonical.get(raw_skill.strip().lower())
 
 
+def normalize_email(raw: str) -> Optional[str]:
+    """Normalize an email to a trimmed, lowercased form.
+
+    Performs a basic shape check (must contain a single '@' with text on both
+    sides). Returns None for anything that is not email-shaped, so callers can
+    drop it. Full RFC validation is intentionally out of scope.
+    """
+    text = raw.strip().lower()
+    if text.count("@") != 1:
+        return None
+    local, _, domain = text.partition("@")
+    if not local or "." not in domain:
+        return None
+    return text
+
+
 def normalize_phone(
     raw: str, region: str = _DEFAULT_PHONE_REGION
 ) -> Optional[str]:
@@ -140,7 +157,6 @@ def normalize_country(raw: str) -> Optional[str]:
     if not text:
         return None
 
-    # Exact code matches first (cheap and unambiguous).
     upper = text.upper()
     if len(upper) == 2 and pycountry.countries.get(alpha_2=upper):
         return upper
@@ -149,7 +165,6 @@ def normalize_country(raw: str) -> Optional[str]:
         if country:
             return country.alpha_2
 
-    # Fall back to a name lookup, tolerant of minor variations.
     try:
         matches = pycountry.countries.search_fuzzy(text)
     except LookupError:

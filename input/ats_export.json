@@ -1,0 +1,20 @@
+{
+  "candidates": [
+    {
+      "full_name": "Jane Doe",
+      "email": "jane.doe@example.com",
+      "phone": "+1 415-555-0100",
+      "skills": ["Python", "JS", "Kubernetes"],
+      "company": "Acme Corp",
+      "updated_at": "2024-03-15T09:30:00Z"
+    },
+    {
+      "full_name": "Mark Smith",
+      "email": "mark.smith@example.com",
+      "phone": "(202) 555-0182",
+      "skills": ["Go", "Docker"],
+      "company": "Globex",
+      "updated_at": "2023-11-02T14:00:00Z"
+    }
+  ]
+}

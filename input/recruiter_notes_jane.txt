@@ -1,0 +1,13 @@
+Recruiter screen notes
+=======================
+
+Name: Jane Doe
+Candidate reached out via referral.
+
+Contact: jane.doe@example.com, alt jdoe.personal@gmail.com
+Phone: 415 555 0100
+
+Skills: Python, TypeScript, machine learning
+Current Company: Acme Corp
+
+Strong communicator. Available in 4 weeks.

@@ -1,0 +1,8 @@
+{
+  "version": "slim-v1",
+  "fields": ["candidate_id", "full_name", "emails", "phones", "skills"],
+  "rename": { "full_name": "name" },
+  "null_policy": "omit",
+  "include_confidence": false,
+  "include_provenance": false
+}
